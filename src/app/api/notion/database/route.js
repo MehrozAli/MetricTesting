@@ -9,19 +9,43 @@ const COLLECTION_NAME = process.env.QDRANT_COLLECTION || "metric_definitions";
 const EMBEDDING_MODEL = "text-embedding-3-small";
 const CHAT_MODEL = "gpt-4o";
 
-const notion = new Client({
-  auth: process.env.NOTION_API_KEY,
-});
+const MAX_QUERY_LENGTH = 500;
 
-const qdrantClient = new QdrantClient({
-  url: QDRANT_URL,
-  apiKey: QDRANT_API_KEY,
-  timeout: 30000,
-});
+let clients;
 
-const openaiClient = new OpenAI({
-  apiKey: OPENAI_API_KEY,
-});
+// Clients are created on first request rather than at import time, so
+// `next build` can collect page data without any API keys present.
+function getClients() {
+  if (!clients) {
+    clients = {
+      notion: new Client({ auth: process.env.NOTION_API_KEY }),
+      qdrant: new QdrantClient({
+        url: QDRANT_URL,
+        apiKey: QDRANT_API_KEY,
+        timeout: 30000,
+      }),
+      openai: new OpenAI({ apiKey: OPENAI_API_KEY }),
+    };
+  }
+  return clients;
+}
+
+function missingConfig() {
+  const required = {
+    OPENAI_API_KEY,
+    QDRANT_URL,
+    NOTION_API_KEY: process.env.NOTION_API_KEY,
+    NOTION_PROMPT_PAGE_ID: process.env.NOTION_PROMPT_PAGE_ID,
+  };
+  return Object.keys(required).filter((name) => !required[name]);
+}
+
+function jsonResponse(body, status) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
 
 // const SYSTEM_PROMPT = `ROLE: You are a concise and direct property management metrics assistant for a help center system.
 // PERSONA: Act as a knowledgeable but brief property management expert who provides clear, actionable answers without unnecessary elaboration.
@@ -213,7 +237,7 @@ const openaiClient = new OpenAI({
 
 async function extractCodeFromPage(pageId) {
   try {
-    const response = await notion.blocks.children.list({
+    const response = await getClients().notion.blocks.children.list({
       block_id: pageId,
     });
 
@@ -361,7 +385,7 @@ function createSparseVector(text, vocab) {
 async function getVocabularyFromQdrant() {
   try {
     const vocabId = "00000000-0000-0000-0000-000000000000";
-    const result = await qdrantClient.retrieve(COLLECTION_NAME, {
+    const result = await getClients().qdrant.retrieve(COLLECTION_NAME, {
       ids: [vocabId],
       with_payload: true,
     });
@@ -381,7 +405,7 @@ async function getVocabularyFromQdrant() {
  */
 async function generateEmbedding(text) {
   try {
-    const response = await openaiClient.embeddings.create({
+    const response = await getClients().openai.embeddings.create({
       model: EMBEDDING_MODEL,
       input: text,
     });
@@ -399,7 +423,6 @@ async function hybridSearchWithNativeFusion(
   query,
   limit = 10,
   prefetchLimit = 20,
-  fusionType = "rrf",
   weights = [0.8, 0.2]
 ) {
   const vocab = await getVocabularyFromQdrant();
@@ -408,7 +431,7 @@ async function hybridSearchWithNativeFusion(
 
   const sparseQueryVector = createSparseVector(query, vocab);
 
-  const searchResult = await qdrantClient.query(COLLECTION_NAME, {
+  const searchResult = await getClients().qdrant.query(COLLECTION_NAME, {
     prefetch: [
       {
         query: denseQueryVector,
@@ -421,10 +444,7 @@ async function hybridSearchWithNativeFusion(
         limit: prefetchLimit,
       },
     ],
-    query: {
-      fusion: fusionType,
-      weights: weights,
-    },
+    query: { rrf: { weights } },
     limit: limit,
     with_payload: true,
   });
@@ -523,7 +543,7 @@ ${context}
 
 Based on the query type and the retrieved context above, provide an appropriate response.`;
 
-  const stream = await openaiClient.chat.completions.create({
+  const stream = await getClients().openai.chat.completions.create({
     model: CHAT_MODEL,
     messages: [
       { role: "system", content: SYSTEM_PROMPT_FROM_NOTION },
@@ -546,7 +566,7 @@ Based on the query type and the retrieved context above, provide an appropriate 
  */
 async function checkCollectionExists() {
   try {
-    const collections = await qdrantClient.getCollections();
+    const collections = await getClients().qdrant.getCollections();
     return collections.collections.some((col) => col.name === COLLECTION_NAME);
   } catch (error) {
     console.error(`Error checking collection: ${error}`);
@@ -562,27 +582,43 @@ export async function POST(request) {
     let body;
     try {
       body = await request.json();
-    } catch (error) {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: "Invalid JSON in request body",
-          message: error.message,
-        }),
-        {
-          status: 400,
-          headers: { "Content-Type": "application/json" },
-        }
+    } catch {
+      return jsonResponse(
+        { success: false, error: "Request body must be valid JSON" },
+        400
       );
     }
 
-    const pageId = process.env.NOTION_PROMPT_PAGE_ID;
+    const query = typeof body?.query === "string" ? body.query.trim() : "";
+    if (!query || query.length > MAX_QUERY_LENGTH) {
+      return jsonResponse(
+        {
+          success: false,
+          error: `"query" must be a non-empty string of at most ${MAX_QUERY_LENGTH} characters`,
+        },
+        400
+      );
+    }
+    const requestedPrefetch = Number.parseInt(body.prefetch_limit, 10);
+    const prefetchLimit = Number.isFinite(requestedPrefetch)
+      ? Math.min(Math.max(requestedPrefetch, 1), 50)
+      : 15;
 
-    const jsCode = await getJavaScriptCode(pageId);
+    const missing = missingConfig();
+    if (missing.length > 0) {
+      return jsonResponse(
+        {
+          success: false,
+          error: "Search is not configured",
+          missing,
+        },
+        503
+      );
+    }
+
+    const jsCode = await getJavaScriptCode(process.env.NOTION_PROMPT_PAGE_ID);
 
     const SYSTEM_PROMPT_FROM_NOTION = jsCode[0]?.code;
-
-    const { query, prefetch_limit = 15 } = body;
 
     const collectionExists = await checkCollectionExists();
     if (!collectionExists) {
@@ -601,17 +637,16 @@ export async function POST(request) {
     }
 
     const searchResults = await hybridSearchWithNativeFusion(
-      query.trim(),
+      query,
       10,
-      prefetch_limit,
-      "rrf",
+      prefetchLimit,
       [0.8, 0.2]
     );
 
     const context = generateContextForLLM(searchResults);
 
     const llmResponse = await generateLLMResponse(
-      query.trim(),
+      query,
       context,
       false,
       SYSTEM_PROMPT_FROM_NOTION
@@ -637,7 +672,7 @@ export async function POST(request) {
       return new Response(
         JSON.stringify({
           success: true,
-          query: query.trim(),
+          query: query,
           resultCount: searchResults.length,
           searchType: "direct_response",
           responseType: "json",
@@ -655,7 +690,7 @@ export async function POST(request) {
     } else {
       const encoder = new TextEncoder();
       const stream = await generateLLMResponse(
-        query.trim(),
+        query,
         context,
         true,
         SYSTEM_PROMPT_FROM_NOTION
@@ -667,7 +702,7 @@ export async function POST(request) {
             encoder.encode(
               `data: ${JSON.stringify({
                 type: "metadata",
-                query: query.trim(),
+                query: query,
                 resultCount: searchResults.length,
                 searchType: "hybrid_native_fusion",
                 fusionType: "rrf",
@@ -716,27 +751,9 @@ export async function POST(request) {
     }
   } catch (error) {
     console.error(`API error: ${error}`);
-    return new Response(
-      JSON.stringify({
-        success: false,
-        error: "An error occurred during processing",
-        message: error.message,
-      }),
-      {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      }
+    return jsonResponse(
+      { success: false, error: "An error occurred during processing" },
+      500
     );
   }
-}
-
-export async function OPTIONS(request) {
-  return new Response(null, {
-    status: 200,
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
-    },
-  });
 }
