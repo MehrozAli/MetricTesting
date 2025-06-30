@@ -3,6 +3,7 @@
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import MetricCard from "./MetricCard";
+import { readEventStream } from "@/lib/readEventStream";
 
 function LLMResponse({ response }) {
   return (
@@ -60,95 +61,49 @@ export default function SearchComponent() {
   const [error, setError] = useState(null);
 
   const fetchSearchResults = async (searchTerm) => {
+    if (!searchTerm.trim()) return;
+
+    setIsLoading(true);
+    setError(null);
+    setSearchResults([]);
+    setShowLLMResponse(false);
+    setLlmResponse("");
+
     try {
-      setIsLoading(true);
-      setShowLLMResponse(false);
-      setLlmResponse("");
-
-      if (!searchTerm.trim()) return;
-
-      // Use semantic search with LLM
       const response = await fetch("/api/notion/database", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          query: searchTerm,
-          score_threshold: 0.6,
-          prefetch_limit: 15,
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: searchTerm, prefetch_limit: 15 }),
       });
 
+      const contentType = response.headers.get("content-type") ?? "";
+
       if (!response.ok) {
-        throw new Error(`Semantic search failed: ${response.statusText}`);
+        const details = contentType.includes("application/json")
+          ? await response.json()
+          : null;
+        throw new Error(details?.error || `Search failed (${response.status})`);
       }
 
-      // Check if this is a direct JSON response
-      const contentType = response.headers.get("content-type");
-
-      if (contentType?.includes("application/json")) {
-        // Handle direct JSON response
+      if (contentType.includes("application/json")) {
         const data = await response.json();
-
-        if (data.searchType === "direct_response") {
-          // Set the results directly to selectedSearchResult
-          setSearchResults(data.retrievedMetrics);
-          setShowLLMResponse(false);
-          setIsLoading(false);
-          return;
-        }
+        setSearchResults(data.retrievedMetrics ?? []);
+        return;
       }
 
-      // Handle streaming response
-      if (contentType?.includes("text/event-stream")) {
-        setShowLLMResponse(true);
-        setSearchResults([]); // Clear block results
-        setIsLoading(false);
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let accumulatedResponse = "";
-
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            const chunk = decoder.decode(value);
-            const lines = chunk.split("\n");
-
-            for (const line of lines) {
-              if (line.startsWith("data: ")) {
-                const data = line.slice(6);
-                if (data.trim()) {
-                  try {
-                    const parsed = JSON.parse(data);
-
-                    if (parsed.type === "metadata") {
-                      console.log("Query metadata:", parsed);
-                    } else if (parsed.type === "content") {
-                      accumulatedResponse += parsed.content;
-                      setLlmResponse(accumulatedResponse);
-                    } else if (parsed.type === "done") {
-                      // Keep the response visible after streaming completes
-                      console.log("Streaming completed");
-                    }
-                  } catch (e) {
-                    console.error("Error parsing streaming data:", e);
-                  }
-                }
-              }
-            }
-          }
-        } finally {
-          reader.releaseLock();
+      setShowLLMResponse(true);
+      setIsLoading(false);
+      let accumulated = "";
+      for await (const event of readEventStream(response.body)) {
+        if (event.type === "content") {
+          accumulated += event.content;
+          setLlmResponse(accumulated);
+        } else if (event.type === "error") {
+          throw new Error(event.message);
         }
       }
-    } catch (error) {
-      console.error("Search failed:", error);
-      setSearchResults([]);
-      setShowLLMResponse(false);
+    } catch (err) {
+      setError(err.message || "Search failed");
     } finally {
       setIsLoading(false);
     }
@@ -211,15 +166,12 @@ export default function SearchComponent() {
       {!showLLMResponse && searchResults.length > 0 && (
         <div className="mt-6">
           <h3 className="text-lg font-semibold mb-6 text-gray-900 dark:text-gray-100">
-            Search Results (
-            {searchResults.filter((result) => result.score > 0.6).length}):
+            Search Results ({searchResults.length}):
           </h3>
           <div className="grid gap-6 md:grid-cols-1 lg:grid-cols-2">
-            {searchResults
-              .filter((result) => result.score > 0.6)
-              .map((result, index) => (
-                <MetricCard key={result.uid || index} metric={result} />
-              ))}
+            {searchResults.map((result, index) => (
+              <MetricCard key={result.id || index} metric={result} />
+            ))}
           </div>
         </div>
       )}
