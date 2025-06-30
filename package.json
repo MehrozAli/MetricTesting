@@ -1,35 +1,43 @@
 {
-  "name": "metricefinitioneploy",
+  "name": "metric-lookup",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22.12 <23"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@notionhq/client": "^4.0.0",
-    "@qdrant/js-client-rest": "^1.14.1",
-    "next": "15.3.4",
-    "openai": "^5.8.2",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
+    "@notionhq/client": "^4.0.2",
+    "@qdrant/js-client-rest": "^1.20.0",
+    "next": "^15.5.29",
+    "openai": "^5.23.2",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "react-markdown": "^10.1.0"
   },
   "devDependencies": {
-    "@eslint/eslintrc": "^3",
-    "@tailwindcss/postcss": "^4",
+    "@eslint/eslintrc": "^3.3.7",
+    "@tailwindcss/postcss": "^4.3.5",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/react": "^16.3.3",
     "@vitejs/plugin-react": "^6.3.0",
-    "eslint": "^9",
-    "eslint-config-next": "15.3.4",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^15.5.29",
     "jsdom": "^31.0.0",
-    "tailwindcss": "^4",
+    "tailwindcss": "^4.3.5",
     "vite": "^8.3.7",
     "vitest": "^5.1.0"
+  },
+  "overrides": {
+    "@qdrant/js-client-rest": {
+      "undici": "7.30.2"
+    }
   }
 }
