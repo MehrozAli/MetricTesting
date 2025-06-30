@@ -1,26 +1,56 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --paper: #f6f3ec;
+  --card: #fffdf8;
+  --ink: #1d2a2c;
+  --muted: #56615f;
+  --line: #d9d1c1;
+  --teal: #1e5a5e;
+  --teal-soft: #e3eeec;
+  --clay: #9c4226;
+  --danger-bg: #fbeae4;
+  --danger: #8a2c14;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --paper: #131a1b;
+    --card: #1b2425;
+    --ink: #ebe6da;
+    --muted: #a5aea9;
+    --line: #34403f;
+    --teal: #79bfba;
+    --teal-soft: #1f3536;
+    --clay: #e29274;
+    --danger-bg: #3a1f17;
+    --danger: #f2b19b;
   }
 }
 
+@theme inline {
+  --color-paper: var(--paper);
+  --color-card: var(--card);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-teal: var(--teal);
+  --color-teal-soft: var(--teal-soft);
+  --color-clay: var(--clay);
+  --color-danger-bg: var(--danger-bg);
+  --color-danger: var(--danger);
+  --font-serif: Charter, "Bitstream Charter", "Sitka Text", Cambria, Georgia, serif;
+  --font-sans: system-ui, -apple-system, "Segoe UI", "Noto Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+}
+
+:focus-visible {
+  outline: 3px solid var(--teal);
+  outline-offset: 2px;
 }

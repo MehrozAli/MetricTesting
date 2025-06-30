@@ -1,81 +1,53 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import MetricCard from "./MetricCard";
 import { readEventStream } from "@/lib/readEventStream";
 
-function LLMResponse({ response }) {
-  return (
-    <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 p-4">
-      <div className="prose prose-sm max-w-none dark:prose-invert">
-        <ReactMarkdown
-          components={{
-            p: ({ children }) => (
-              <p className="mb-3 text-sm text-gray-700 dark:text-gray-300">
-                {children}
-              </p>
-            ),
-            strong: ({ children }) => (
-              <strong className="font-semibold text-gray-800 dark:text-gray-200">
-                {children}
-              </strong>
-            ),
-            ul: ({ children }) => (
-              <ul className="mb-3 ml-4 list-disc space-y-1">{children}</ul>
-            ),
-            ol: ({ children }) => (
-              <ol className="mb-3 ml-4 list-decimal space-y-1">{children}</ol>
-            ),
-            li: ({ children }) => (
-              <li className="text-sm text-gray-700 dark:text-gray-300">
-                {children}
-              </li>
-            ),
-            h3: ({ children }) => (
-              <h3 className="mb-2 text-sm font-semibold text-gray-800 dark:text-gray-200">
-                {children}
-              </h3>
-            ),
-            h4: ({ children }) => (
-              <h4 className="mb-2 text-sm font-semibold text-gray-800 dark:text-gray-200">
-                {children}
-              </h4>
-            ),
-          }}
-        >
-          {response}
-        </ReactMarkdown>
-      </div>
-    </div>
-  );
-}
+const EXAMPLE_QUESTIONS = [
+  "Created Leads",
+  "How is the scheduled to toured ratio calculated?",
+  "Why are leased prospects important?",
+];
+
+const markdownComponents = {
+  p: ({ children }) => <p className="mb-3 last:mb-0">{children}</p>,
+  strong: ({ children }) => <strong className="font-semibold text-teal">{children}</strong>,
+  ul: ({ children }) => <ul className="mb-3 ml-5 list-disc space-y-1">{children}</ul>,
+  ol: ({ children }) => <ol className="mb-3 ml-5 list-decimal space-y-1">{children}</ol>,
+  h3: ({ children }) => <h3 className="mb-2 font-serif text-lg font-semibold">{children}</h3>,
+  h4: ({ children }) => <h4 className="mb-2 font-semibold">{children}</h4>,
+};
 
 export default function SearchComponent() {
   const [query, setQuery] = useState("");
-  const [searchResults, setSearchResults] = useState([]);
-
-  const [llmResponse, setLlmResponse] = useState("");
-  const [showLLMResponse, setShowLLMResponse] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+  const [status, setStatus] = useState("idle");
+  const [answer, setAnswer] = useState("");
+  const [metrics, setMetrics] = useState(null);
   const [error, setError] = useState(null);
+  const activeRequest = useRef(null);
 
-  const fetchSearchResults = async (searchTerm) => {
-    if (!searchTerm.trim()) return;
+  const runSearch = async (searchTerm) => {
+    const question = searchTerm.trim();
+    if (!question) return;
 
-    setIsLoading(true);
+    activeRequest.current?.abort();
+    const controller = new AbortController();
+    activeRequest.current = controller;
+
+    setStatus("searching");
     setError(null);
-    setSearchResults([]);
-    setShowLLMResponse(false);
-    setLlmResponse("");
+    setAnswer("");
+    setMetrics(null);
 
     try {
       const response = await fetch("/api/notion/database", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: searchTerm, prefetch_limit: 15 }),
+        body: JSON.stringify({ query: question, prefetch_limit: 15 }),
+        signal: controller.signal,
       });
-
       const contentType = response.headers.get("content-type") ?? "";
 
       if (!response.ok) {
@@ -87,94 +59,147 @@ export default function SearchComponent() {
 
       if (contentType.includes("application/json")) {
         const data = await response.json();
-        setSearchResults(data.retrievedMetrics ?? []);
+        setMetrics(data.retrievedMetrics ?? []);
+        setStatus("done");
         return;
       }
 
-      setShowLLMResponse(true);
-      setIsLoading(false);
+      setStatus("streaming");
       let accumulated = "";
       for await (const event of readEventStream(response.body)) {
         if (event.type === "content") {
           accumulated += event.content;
-          setLlmResponse(accumulated);
+          setAnswer(accumulated);
         } else if (event.type === "error") {
           throw new Error(event.message);
         }
       }
+      setStatus("done");
     } catch (err) {
+      if (err.name === "AbortError") return;
       setError(err.message || "Search failed");
-    } finally {
-      setIsLoading(false);
+      setStatus("failed");
     }
   };
 
-  const handleSearch = async (e) => {
-    e.preventDefault();
-    await fetchSearchResults(query);
+  const handleSubmit = (event) => {
+    event.preventDefault();
+    runSearch(query);
   };
 
+  const askExample = (example) => {
+    setQuery(example);
+    runSearch(example);
+  };
+
+  const busy = status === "searching" || status === "streaming";
+
   return (
-    <div className="max-w-6xl mx-auto p-6">
-      {/* Search Form */}
-      <form onSubmit={handleSearch} className="mb-8">
-        <div className="flex gap-4">
+    <main className="mx-auto max-w-4xl px-4 py-10 sm:px-6 sm:py-14">
+      <header className="mb-8">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-clay">
+          Leasing metrics reference
+        </p>
+        <h1 className="font-serif text-3xl font-semibold text-ink sm:text-4xl">Metric Lookup</h1>
+        <p className="mt-3 max-w-2xl text-muted">
+          Ask what a metric means, how it is calculated or why it matters. Answers come only
+          from the metric catalogue.
+        </p>
+      </header>
+
+      <form onSubmit={handleSubmit} className="mb-8" role="search">
+        <label htmlFor="metric-query" className="mb-2 block text-sm font-medium text-ink">
+          Ask about a metric
+        </label>
+        <div className="flex flex-col gap-3 sm:flex-row">
           <input
+            id="metric-query"
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Enter your search query..."
-            className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
-            disabled={isLoading}
+            placeholder="e.g. How are tours recorded?"
+            maxLength={500}
+            autoComplete="off"
+            className="min-w-0 flex-1 rounded-md border border-line bg-card px-4 py-3 text-ink placeholder:text-muted"
           />
           <button
             type="submit"
-            disabled={isLoading || !query.trim()}
-            className="px-6 py-2 bg-blue-500 dark:bg-blue-600 text-white rounded-lg hover:bg-blue-600 dark:hover:bg-blue-700 disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors"
+            disabled={busy || !query.trim()}
+            className="rounded-md bg-teal px-6 py-3 font-semibold text-paper transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {isLoading ? "Searching..." : "Search"}
+            Search
           </button>
         </div>
       </form>
 
-      {/* Error Display */}
+      {status === "idle" && (
+        <section aria-labelledby="examples-heading" className="rounded-md border border-dashed border-line p-5">
+          <h2 id="examples-heading" className="mb-3 text-sm font-medium text-muted">
+            Not sure where to start? Try one of these:
+          </h2>
+          <ul className="flex flex-wrap gap-2">
+            {EXAMPLE_QUESTIONS.map((example) => (
+              <li key={example}>
+                <button
+                  type="button"
+                  onClick={() => askExample(example)}
+                  className="rounded-full border border-line bg-card px-4 py-2 text-sm text-teal hover:border-teal"
+                >
+                  {example}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <div role="status" aria-live="polite" className="sr-only">
+        {status === "searching" ? "Searching the metric catalogue" : ""}
+        {status === "done" && metrics ? `${metrics.length} matching metrics` : ""}
+      </div>
+
+      {status === "searching" && (
+        <div className="flex items-center gap-3 text-muted" aria-hidden="true">
+          <span className="h-5 w-5 animate-spin rounded-full border-2 border-line border-t-teal" />
+          Searching the metric catalogue…
+        </div>
+      )}
+
       {error && (
-        <div className="mb-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded-lg text-red-700 dark:text-red-300">
+        <div role="alert" className="rounded-md border border-danger/40 bg-danger-bg px-4 py-3 text-danger">
           {error}
         </div>
       )}
 
-      {/* Loading State */}
-      {isLoading && (
-        <div className="mb-6 text-center">
-          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 dark:border-blue-400"></div>
-          <p className="mt-2 text-gray-600 dark:text-gray-400">Searching...</p>
-        </div>
-      )}
-
-      {/* LLM Response Display */}
-      {showLLMResponse && llmResponse && (
-        <div className="mb-6">
-          <h3 className="text-lg font-semibold mb-3 text-gray-900 dark:text-gray-100">
-            Response:
-          </h3>
-          <LLMResponse response={llmResponse} />
-        </div>
-      )}
-
-      {/* Search Results (from primary API) */}
-      {!showLLMResponse && searchResults.length > 0 && (
-        <div className="mt-6">
-          <h3 className="text-lg font-semibold mb-6 text-gray-900 dark:text-gray-100">
-            Search Results ({searchResults.length}):
-          </h3>
-          <div className="grid gap-6 md:grid-cols-1 lg:grid-cols-2">
-            {searchResults.map((result, index) => (
-              <MetricCard key={result.id || index} metric={result} />
-            ))}
+      {answer && (
+        <section aria-labelledby="answer-heading" aria-busy={status === "streaming"} className="mb-8">
+          <h2 id="answer-heading" className="mb-3 font-serif text-xl font-semibold">
+            Answer
+          </h2>
+          <div className="rounded-md border border-line bg-teal-soft px-5 py-4 leading-relaxed text-ink">
+            <ReactMarkdown components={markdownComponents}>{answer}</ReactMarkdown>
           </div>
-        </div>
+        </section>
       )}
-    </div>
+
+      {metrics && metrics.length === 0 && (
+        <p className="text-muted">No metric in the catalogue matched that question. Try the metric&apos;s name.</p>
+      )}
+
+      {metrics?.length > 0 && (
+        <section aria-labelledby="metrics-heading">
+          <h2 id="metrics-heading" className="mb-4 font-serif text-xl font-semibold">
+            {metrics.length === 1 ? "Matching metric" : `Matching metrics (${metrics.length})`}
+          </h2>
+          <ul className="grid gap-5">
+            {metrics.map((metric, index) => (
+              <li key={metric.id || index}>
+                <MetricCard metric={metric} />
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </main>
   );
 }

@@ -27,7 +27,7 @@ function streamReply(events) {
 }
 
 async function search(text) {
-  fireEvent.change(screen.getByRole("textbox"), { target: { value: text } });
+  fireEvent.change(screen.getByLabelText(/ask about a metric/i), { target: { value: text } });
   fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
 }
 
@@ -42,7 +42,8 @@ describe("MetricCard", () => {
     expect(screen.getByRole("heading", { name: "Created Leads" })).toBeTruthy();
     expect(screen.getByText(card.description)).toBeTruthy();
     expect(screen.getByText("Website, Phone")).toBeTruthy();
-    expect(screen.queryByText("Recorded By")).toBeNull();
+    expect(screen.getByText("MET-001")).toBeTruthy();
+    expect(screen.queryByText("Recorded by")).toBeNull();
   });
 });
 
@@ -51,7 +52,7 @@ describe("SearchComponent", () => {
     render(<SearchComponent />);
     const button = screen.getByRole("button", { name: /^search$/i });
     expect(button.disabled).toBe(true);
-    fireEvent.change(screen.getByRole("textbox"), { target: { value: "tours" } });
+    fireEvent.change(screen.getByLabelText(/ask about a metric/i), { target: { value: "tours" } });
     expect(button.disabled).toBe(false);
   });
 
@@ -96,7 +97,18 @@ describe("SearchComponent", () => {
     );
     render(<SearchComponent />);
     await search("tours");
-    expect(await screen.findByText(/Search is not configured/)).toBeTruthy();
+    expect((await screen.findByRole("alert")).textContent).toBe("Search is not configured");
+  });
+
+  it("runs an example question from the empty state", async () => {
+    const fetchMock = vi.fn(async () => jsonReply({ retrievedMetrics: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<SearchComponent />);
+    fireEvent.click(screen.getByRole("button", { name: "Created Leads" }));
+
+    expect(await screen.findByText(/No metric in the catalogue matched/)).toBeTruthy();
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).query).toBe("Created Leads");
+    expect(screen.getByLabelText(/ask about a metric/i).value).toBe("Created Leads");
   });
 
   it("shows an error when the answer stream is interrupted", async () => {
@@ -111,6 +123,8 @@ describe("SearchComponent", () => {
     );
     render(<SearchComponent />);
     await search("tours");
-    await waitFor(() => expect(screen.getByText(/answer was interrupted/)).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toMatch(/answer was interrupted/)
+    );
   });
 });
