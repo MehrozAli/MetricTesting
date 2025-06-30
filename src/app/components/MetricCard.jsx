@@ -12,17 +12,6 @@ export default function MetricCard({ metric }) {
     importance,
   } = metric;
 
-  console.log({
-    business_name,
-    definition,
-    calculation,
-    m_recorded_by,
-    m_they_come_through,
-    uid,
-    aliases,
-    importance,
-  });
-
   return (
     <div className="bg-white border border-gray-200 rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 p-6">
       {/* Header */}

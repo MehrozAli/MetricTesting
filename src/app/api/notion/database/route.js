@@ -1,13 +1,13 @@
-import { QdrantClient } from '@qdrant/js-client-rest';
-import OpenAI from 'openai';
+import { QdrantClient } from "@qdrant/js-client-rest";
+import OpenAI from "openai";
 
 // Configuration
 const QDRANT_URL = process.env.QDRANT_URL;
 const QDRANT_API_KEY = process.env.QDRANT_API_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const COLLECTION_NAME = 'HDB_METRIC';
-const EMBEDDING_MODEL = 'text-embedding-3-small';
-const CHAT_MODEL = 'gpt-4o';
+const COLLECTION_NAME = "HDB_METRIC";
+const EMBEDDING_MODEL = "text-embedding-3-small";
+const CHAT_MODEL = "gpt-4o";
 
 // Initialize clients
 const qdrantClient = new QdrantClient({
@@ -138,7 +138,7 @@ async function searchBestMatches(
   query,
   limit = 5,
   filters = null,
-  score_threshold = 0.4,
+  score_threshold = 0.4
 ) {
   try {
     console.log(`Searching for: '${query}' (returning top ${limit} results)`);
@@ -165,12 +165,12 @@ async function searchBestMatches(
 
     const searchResults = await qdrantClient.search(
       COLLECTION_NAME,
-      searchParams,
+      searchParams
     );
 
     // Filter results based on score threshold
     const filteredResults = searchResults.filter(
-      (result) => result.score >= score_threshold,
+      (result) => result.score >= score_threshold
     );
 
     console.log(`Found ${filteredResults.length} results`);
@@ -187,28 +187,30 @@ async function searchBestMatches(
 function formatResults(results) {
   return results.map((result) => {
     const payload = result.payload;
+    console.log({ payload });
 
     return {
       score: result.score,
-      id: payload['UID'] || '',
-      title: payload['Business Name'] || '',
+      id: payload["UID"] || "",
+      title: payload["Business Name"] || "",
       UniqueName:
-        payload['Unique Name*']?.string || payload['Unique Name*'] || '',
-      InSubjectName: payload['In-subject Name'] || '',
-      description: payload['Definition'] || '',
-      calculations: payload['Calculations'] || '',
-      recordedBy: payload['m_Recorded By'] || '',
-      sources: payload['m_They Come Through']
-        ? [payload['m_They Come Through']]
+        payload["Unique Name*"]?.string || payload["Unique Name*"] || "",
+      InSubjectName: payload["In-subject Name"] || "",
+      description: payload["m_Definition"] || "",
+      calculations: payload["m_Calculation"] || "",
+      recordedBy: payload["m_Recorded By"] || "",
+      example: payload["m_Example"] || "",
+      sources: payload["m_They Come Through"]
+        ? [payload["m_They Come Through"]]
         : [],
-      aliases: payload['Aliases'] || '',
-      valueType: payload['Value Type'] || '',
-      performanceIndicator: payload['Performance Indicator'] || '',
-      dataSources: payload['Data Sources'] || 'N/A',
-      aggregationType: payload['Aggregation Type'] || '',
-      importance: payload['Importance'] || '',
-      databaseName: payload['Database Name (Existing)'] || '',
-      subjectInitials: payload['Subject Initials'] || '',
+      aliases: payload["Aliases"] || "",
+      valueType: payload["Value Type"] || "",
+      performanceIndicator: payload["Performance Indicator"] || "",
+      dataSources: payload["Data Sources"] || "N/A",
+      aggregationType: payload["Aggregation Type"] || "",
+      importance: payload["Importance"] || "",
+      databaseName: payload["Database Name (Existing)"] || "",
+      subjectInitials: payload["Subject Initials"] || "",
     };
   });
 }
@@ -227,7 +229,7 @@ function generateContextForLLM(searchResults) {
         context += `Calculations: ${result.calculations}\n`;
       if (result.recordedBy) context += `Recorded By: ${result.recordedBy}\n`;
       if (result.sources.length > 0)
-        context += `Sources: ${result.sources.join(', ')}\n`;
+        context += `Sources: ${result.sources.join(", ")}\n`;
       if (result.valueType) context += `Value Type: ${result.valueType}\n`;
       if (result.performanceIndicator)
         context += `Performance Indicator: ${result.performanceIndicator}\n`;
@@ -237,14 +239,14 @@ function generateContextForLLM(searchResults) {
         context += `Aggregation Type: ${result.aggregationType}\n`;
       return context;
     })
-    .join('\n---\n');
+    .join("\n---\n");
 }
 
 /**
  * Generate LLM response based on query and context
  */
 async function generateLLMResponse(query, context, isStreaming = true) {
-  console.log({ query, context });
+  // console.log({ query, context });
 
   const userPrompt = `User Query: "${query}"
 
@@ -258,8 +260,8 @@ Based on the query type and the retrieved context above, provide an appropriate 
     const stream = await openaiClient.chat.completions.create({
       model: CHAT_MODEL,
       messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: userPrompt },
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: userPrompt },
       ],
       stream: true,
       temperature: 0,
@@ -272,8 +274,8 @@ Based on the query type and the retrieved context above, provide an appropriate 
     const completion = await openaiClient.chat.completions.create({
       model: CHAT_MODEL,
       messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: userPrompt },
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: userPrompt },
       ],
       temperature: 0,
       max_tokens: 2000,
@@ -309,13 +311,13 @@ export async function POST(request) {
       return new Response(
         JSON.stringify({
           success: false,
-          error: 'Invalid JSON in request body',
+          error: "Invalid JSON in request body",
           message: error.message,
         }),
         {
           status: 400,
-          headers: { 'Content-Type': 'application/json' },
-        },
+          headers: { "Content-Type": "application/json" },
+        }
       );
     }
 
@@ -329,17 +331,17 @@ export async function POST(request) {
     } = body;
 
     // Validate query
-    if (!query || typeof query !== 'string' || query.trim() === '') {
+    if (!query || typeof query !== "string" || query.trim() === "") {
       return new Response(
         JSON.stringify({
           success: false,
-          error: 'Invalid or missing query parameter',
-          message: 'Query must be a non-empty string',
+          error: "Invalid or missing query parameter",
+          message: "Query must be a non-empty string",
         }),
         {
           status: 400,
-          headers: { 'Content-Type': 'application/json' },
-        },
+          headers: { "Content-Type": "application/json" },
+        }
       );
     }
 
@@ -348,13 +350,13 @@ export async function POST(request) {
       return new Response(
         JSON.stringify({
           success: false,
-          error: 'Invalid limit parameter',
-          message: 'Limit must be an integer between 1 and 100',
+          error: "Invalid limit parameter",
+          message: "Limit must be an integer between 1 and 100",
         }),
         {
           status: 400,
-          headers: { 'Content-Type': 'application/json' },
-        },
+          headers: { "Content-Type": "application/json" },
+        }
       );
     }
 
@@ -366,12 +368,12 @@ export async function POST(request) {
           success: false,
           error: `Collection '${COLLECTION_NAME}' not found`,
           message:
-            'Please ensure the collection is created and populated first',
+            "Please ensure the collection is created and populated first",
         }),
         {
           status: 404,
-          headers: { 'Content-Type': 'application/json' },
-        },
+          headers: { "Content-Type": "application/json" },
+        }
       );
     }
 
@@ -380,7 +382,7 @@ export async function POST(request) {
       query.trim(),
       limit,
       filters,
-      score_threshold,
+      score_threshold
     );
 
     // Generate context for LLM
@@ -397,24 +399,24 @@ export async function POST(request) {
           controller.enqueue(
             encoder.encode(
               `data: ${JSON.stringify({
-                type: 'metadata',
+                type: "metadata",
                 query: query.trim(),
                 resultCount: searchResults.length,
-              })}\n\n`,
-            ),
+              })}\n\n`
+            )
           );
 
           // Stream the LLM response
           for await (const chunk of stream) {
-            const content = chunk.choices[0]?.delta?.content || '';
+            const content = chunk.choices[0]?.delta?.content || "";
             if (content) {
               controller.enqueue(
                 encoder.encode(
                   `data: ${JSON.stringify({
-                    type: 'content',
+                    type: "content",
                     content: content,
-                  })}\n\n`,
-                ),
+                  })}\n\n`
+                )
               );
             }
           }
@@ -423,14 +425,14 @@ export async function POST(request) {
           controller.enqueue(
             encoder.encode(
               `data: ${JSON.stringify({
-                type: 'done',
+                type: "done",
                 retrievedMetrics: formatResults(searchResults).map((r) => ({
                   id: r.id,
                   title: r.title,
                   score: r.score,
                 })),
-              })}\n\n`,
-            ),
+              })}\n\n`
+            )
           );
 
           controller.close();
@@ -439,9 +441,9 @@ export async function POST(request) {
 
       return new Response(readableStream, {
         headers: {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          Connection: 'keep-alive',
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
         },
       });
     } else {
@@ -449,7 +451,7 @@ export async function POST(request) {
       const llmResponse = await generateLLMResponse(
         query.trim(),
         context,
-        false,
+        false
       );
 
       return new Response(
@@ -467,10 +469,10 @@ export async function POST(request) {
         {
           status: 200,
           headers: {
-            'Content-Type': 'application/json',
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            "Content-Type": "application/json",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
           },
-        },
+        }
       );
     }
   } catch (error) {
@@ -478,13 +480,13 @@ export async function POST(request) {
     return new Response(
       JSON.stringify({
         success: false,
-        error: 'An error occurred during processing',
+        error: "An error occurred during processing",
         message: error.message,
       }),
       {
         status: 500,
-        headers: { 'Content-Type': 'application/json' },
-      },
+        headers: { "Content-Type": "application/json" },
+      }
     );
   }
 }
@@ -494,9 +496,9 @@ export async function OPTIONS(request) {
   return new Response(null, {
     status: 200,
     headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
     },
   });
 }
