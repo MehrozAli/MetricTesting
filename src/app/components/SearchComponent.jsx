@@ -92,12 +92,12 @@ export default function SearchComponent() {
         setShowLLMResponse(false);
       } catch (primaryError) {
         console.error(
-          "Primary search failed, using semantic search with LLM:",
+          "Primary search failed, using hybrid semantic search with native fusion:",
           primaryError
         );
         setIsLoading(true);
 
-        // Use semantic search with LLM for natural language queries
+        // Use hybrid semantic search with native Qdrant fusion
         const response = await fetch("/api/notion/database", {
           method: "POST",
           headers: {
@@ -108,11 +108,15 @@ export default function SearchComponent() {
             limit: 5,
             streaming: true,
             score_threshold: 0.4,
+            prefetch_limit: 15,
+            fusion_type: "rrf",
           }),
         });
 
         if (!response.ok) {
-          throw new Error(`Semantic search failed: ${response.statusText}`);
+          throw new Error(
+            `Hybrid semantic search failed: ${response.statusText}`
+          );
         }
 
         // Handle streaming response
@@ -144,12 +148,23 @@ export default function SearchComponent() {
                       const parsed = JSON.parse(data);
 
                       if (parsed.type === "metadata") {
-                        console.log("Query metadata:", parsed);
+                        console.log("Hybrid search metadata:", {
+                          ...parsed,
+                          searchType:
+                            parsed.searchType || "hybrid_native_fusion",
+                          fusionType: parsed.fusionType || "rrf",
+                        });
                       } else if (parsed.type === "content") {
                         accumulatedResponse += parsed.content;
                         setLlmResponse(accumulatedResponse);
                       } else if (parsed.type === "done") {
                         setIsStreaming(false);
+                        if (parsed.retrievedMetrics) {
+                          console.log(
+                            "Retrieved metrics (native fusion):",
+                            parsed.retrievedMetrics
+                          );
+                        }
                       }
                     } catch (e) {
                       console.error("Error parsing streaming data:", e);

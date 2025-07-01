@@ -1,3 +1,4 @@
+// api/notion/database/route.js - Updated with Qdrant Native Fusion
 import { QdrantClient } from "@qdrant/js-client-rest";
 import OpenAI from "openai";
 
@@ -5,7 +6,7 @@ import OpenAI from "openai";
 const QDRANT_URL = process.env.QDRANT_URL;
 const QDRANT_API_KEY = process.env.QDRANT_API_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const COLLECTION_NAME = "HDB_METRIC";
+const COLLECTION_NAME = "HDB_METRIC_HYBRID"; // Updated for hybrid collection
 const EMBEDDING_MODEL = "text-embedding-3-small";
 const CHAT_MODEL = "gpt-4o";
 
@@ -20,101 +21,7 @@ const openaiClient = new OpenAI({
   apiKey: OPENAI_API_KEY,
 });
 
-/**
- * Comprehensive prompt for LLM to understand and respond to queries
- */
-// const SYSTEM_PROMPT = `**ROLE:** You are a concise and direct property management metrics assistant for a help center system.
-
-// **PERSONA:** Act as a knowledgeable but brief property management expert who provides clear, actionable answers without unnecessary elaboration.
-
-// **TONE:** Professional, direct, and informative. Always be concise and to-the-point.
-
-// **TASK:** Analyze user queries about property management metrics and provide precise answers using the retrieved metric data.
-
-// **QUERY HANDLING RULES:**
-
-// For any question about a metric, analyze ALL available columns (Definition, Calculations, Importance, Data Sources, etc.) and provide the most relevant and comprehensive answer based on what the user is asking:
-
-// 1. **Definition Questions**
-//    Patterns: “What does **[metric]** measure?” / “What is **[metric]**?”
-//    Combine information from ‘Definition’ **and** ‘Calculations’. Provide both what it measures **and** how it’s calculated if available.
-
-// 2. **Calculation Questions**
-//    Patterns: “How is **[metric]** calculated?” / “How is **[metric]** calculated in practice?”
-//    Primary source: ‘Calculations’. Include practical implementation details; add context from ‘Definition’ when helpful.
-
-// 3. **Importance Questions**
-//    Patterns: “Why is **[metric]** important?” / “Why is **[metric]** important for property performance?”
-//    Primary source: ‘Importance’. Link to property-performance outcomes; use ‘Definition’ if ‘Importance’ is missing.
-
-// 4. **Low-Performance Actions**
-//    Patterns: “What actions can be taken if **[metric]** is low?”
-//    Draw from ‘Importance’ and best practices. Provide actionable improvement strategies considering operational context.
-
-// 5. **High-Performance Indicators**
-//    Patterns: “What does a high **[metric]** indicate?”
-//    Analyze positive implications from ‘Importance’. Connect to business outcomes; reference benchmarks if available.
-
-// 6. **Monitoring Frequency**
-//    Patterns: “How frequently should **[metric]** be monitored?”
-//    Check ‘Data Sources’ for update frequency. Consider metric volatility and business impact; provide practical cadence.
-
-// 7. **Improvement Strategies**
-//    Patterns: “How can we improve **[metric]** over time?”
-//    Combine insights from ‘Importance’ and best practices to give actionable tactics and long-term approaches.
-
-// 8. **Data Sources & Tools**
-//    Patterns: “What tools or data sources are used to track **[metric]**?”
-//    Primary source: ‘Data Sources’. Include system integrations, reporting tools, and data-collection methods.
-
-// 9. **Decision Influence**
-//    Patterns: “How does **[metric]** influence leasing decisions?”
-//    Analyze strategic impact from ‘Importance’. Connect to decision-making processes and business outcomes.
-
-// 10. **Common Interpretation Errors**
-//     Patterns: “What are common errors in interpreting **[metric]**?”
-//     Identify misunderstandings, clarify calculation nuances, and highlight context considerations.
-
-// 11. **Real-World Examples**
-//     Patterns: “Can you explain **[metric]** using a real-world example?”
-//     Provide concrete scenarios with numerical illustrations when possible.
-
-// 12. **Metric Relationships**
-//     Patterns: “How does **[metric]** relate to other metrics like conversion or engagement?”
-//     Map interdependencies and cascading effects among KPIs.
-
-// 13. **Strategic Insights**
-//     Patterns: “What strategic insights can be drawn from tracking **[metric]**?”
-//     Extract high-level business implications and connect to strategic goals.
-
-// 14. **Department Usage**
-//     Patterns: “What departments or teams use **[metric]** most frequently?”
-//     Identify primary stakeholders, departmental applications, and cross-functional uses.
-
-// 15. **General Search (metric-only queries)**
-//     When the user supplies only a metric name, combine key information from multiple columns.
-//     Format: **[Metric Name]**: brief comprehensive description.
-
-// **RESPONSE GUIDELINES:**
-// - Recognize metric-name variations (e.g., ‘created leads’ = ‘new leads’ = ‘leads’).
-// - Handle compound metrics (e.g., ‘contacts who toured’ = ‘toured contacts’).
-// - Address temporal qualifiers (e.g., ‘1st toured’ = ‘first toured’).
-// - Keep responses ≤ 45 words when possible (longer if needed for completeness).
-// - Use **bold** only for metric names.
-// - No bullet points unless listing multiple distinct metrics.
-// - If information isn’t available, reply: “Information not available in current data.”
-// - If the question is outside scope, reply: “Your question is out of my domain. Please ask questions about the product.”
-// - **Always analyze ALL available columns** to provide the most helpful, concise answer.
-
-// **EXAMPLES:**
-// Query: "What does 'created leads' measure?"
-// Response: "**Created leads** measures [combine Definition + Calculations data to explain both what it tracks and how it's calculated]."
-
-// Query: "Why is 'New Leads' important?"
-// Response: "New leads help to evaluate how well marketing strategies are performing."
-
-// Remember: Be direct, extract exact information from the relevant column, and keep responses brief and actionable.`;
-
+// System prompt (keeping your existing one)
 const SYSTEM_PROMPT = `ROLE: You are a concise and direct property management metrics assistant for a help center system.
 PERSONA: Act as a knowledgeable but brief property management expert who provides clear, actionable answers without unnecessary elaboration.
 TONE: Professional, direct, and informative. Always be concise and to-the-point.
@@ -235,9 +142,96 @@ Query: "What does 'created leads' measure?"
 Response: Created leads [extract exact definition from Definition column + calculations from Calculations column if available, using only database content].
 Query: "Why is 'New Leads' important?"
 Response: [Use only content from Importance column in database. If empty: "Importance information not available in current data."]
-REMEMBER: Your role is to be a precise conduit for the Notion database information, not to interpret, enhance, or supplement it with external knowledge.
+REMEMBER: Your role is to be a precise conduit for the Notion database information, not to interpret, enhance, or supplement it with external knowledge.`;
 
-`;
+/**
+ * Tokenize text for sparse vector creation
+ */
+function tokenizeText(text) {
+  // Convert to lowercase and split by common delimiters
+  text = text.toLowerCase();
+  // Replace common punctuation with spaces
+  const punctuation = [
+    ",",
+    ".",
+    ";",
+    ":",
+    "!",
+    "?",
+    "(",
+    ")",
+    "[",
+    "]",
+    "{",
+    "}",
+    "-",
+    "_",
+    "/",
+  ];
+  punctuation.forEach((char) => {
+    text = text.replace(new RegExp("\\" + char, "g"), " ");
+  });
+  // Split and filter out empty strings
+  return text.split(" ").filter((token) => token.trim());
+}
+
+/**
+ * Create sparse vector from text
+ */
+function createSparseVector(text, vocab) {
+  const tokens = tokenizeText(text);
+  const tokenCounts = {};
+
+  // Count tokens
+  tokens.forEach((token) => {
+    if (token in vocab) {
+      tokenCounts[token] = (tokenCounts[token] || 0) + 1;
+    }
+  });
+
+  const indices = [];
+  const values = [];
+
+  Object.entries(tokenCounts).forEach(([token, count]) => {
+    if (token in vocab) {
+      indices.push(vocab[token]);
+      values.push(count);
+    }
+  });
+
+  // Normalize the vector
+  if (values.length > 0) {
+    const norm = Math.sqrt(values.reduce((sum, val) => sum + val * val, 0));
+    if (norm > 0) {
+      for (let i = 0; i < values.length; i++) {
+        values[i] /= norm;
+      }
+    }
+  }
+
+  return { indices, values };
+}
+
+/**
+ * Get vocabulary from Qdrant
+ */
+async function getVocabularyFromQdrant() {
+  try {
+    const vocabId = "00000000-0000-0000-0000-000000000000";
+    const result = await qdrantClient.retrieve(COLLECTION_NAME, {
+      ids: [vocabId],
+      with_payload: true,
+    });
+
+    if (result.length > 0) {
+      return result[0].payload.vocabulary || {};
+    }
+    return {};
+  } catch (error) {
+    console.error(`Could not retrieve vocabulary: ${error}`);
+    return {};
+  }
+}
 
 /**
  * Generate embedding for a given text using OpenAI
@@ -256,53 +250,50 @@ async function generateEmbedding(text) {
 }
 
 /**
- * Search the Qdrant collection for the most relevant results
+ * Perform hybrid search using Qdrant's native fusion
  */
-async function searchBestMatches(
+async function hybridSearchWithNativeFusion(
   query,
-  limit = 5,
-  filters = null,
-  score_threshold = 0.4
+  limit = 10,
+  prefetchLimit = 20,
+  fusionType = "rrf"
 ) {
-  try {
-    console.log(`Searching for: '${query}' (returning top ${limit} results)`);
+  // console.log(`Performing hybrid search with native fusion for: '${query}'`);
 
-    const queryEmbedding = await generateEmbedding(query);
+  // Get vocabulary for sparse vector creation
+  const vocab = await getVocabularyFromQdrant();
 
-    const searchParams = {
-      vector: queryEmbedding,
-      limit: limit,
-      with_payload: true,
-      with_vector: true,
-    };
+  // Generate dense embedding
+  const denseQueryVector = await generateEmbedding(query);
 
-    if (filters && Object.keys(filters).length > 0) {
-      const mustConditions = Object.entries(filters).map(([key, value]) => ({
-        key: key,
-        match: { value: value },
-      }));
+  // Generate sparse vector
+  const sparseQueryVector = createSparseVector(query, vocab);
 
-      searchParams.filter = {
-        must: mustConditions,
-      };
-    }
+  // Use native fusion
+  const searchResult = await qdrantClient.query(COLLECTION_NAME, {
+    prefetch: [
+      {
+        query: denseQueryVector,
+        using: "dense",
+        limit: prefetchLimit,
+      },
+      {
+        query: sparseQueryVector,
+        using: "sparse",
+        limit: prefetchLimit,
+      },
+    ],
+    query: {
+      fusion: fusionType, // "rrf" for Reciprocal Rank Fusion
+    },
+    limit: limit,
+    with_payload: true,
+  });
 
-    const searchResults = await qdrantClient.search(
-      COLLECTION_NAME,
-      searchParams
-    );
-
-    // Filter results based on score threshold
-    const filteredResults = searchResults.filter(
-      (result) => result.score >= score_threshold
-    );
-
-    console.log(`Found ${filteredResults.length} results`);
-    return filteredResults;
-  } catch (error) {
-    console.error(`Error during search: ${error}`);
-    throw error;
-  }
+  // console.log(
+  //   `Native fusion search found ${searchResult.points.length} results`
+  // );
+  return searchResult.points;
 }
 
 /**
@@ -319,8 +310,8 @@ function formatResults(results) {
       UniqueName:
         payload["Unique Name*"]?.string || payload["Unique Name*"] || "",
       InSubjectName: payload["In-subject Name"] || "",
-      description: payload["m_Definition"] || "",
-      calculations: payload["m_Calculation"] || "",
+      description: payload["m_Definition"] || payload["Definition"] || "",
+      calculations: payload["m_Calculation"] || payload["Calculations"] || "",
       recordedBy: payload["m_Recorded By"] || "",
       example: payload["m_Example"] || "",
       sources: payload["m_They Come Through"]
@@ -360,6 +351,8 @@ function generateContextForLLM(searchResults) {
         context += `Data Sources: ${result.dataSources}\n`;
       if (result.aggregationType)
         context += `Aggregation Type: ${result.aggregationType}\n`;
+      if (result.importance) context += `Importance: ${result.importance}\n`;
+      if (result.aliases) context += `Aliases: ${result.aliases}\n`;
       return context;
     })
     .join("\n---\n");
@@ -451,37 +444,9 @@ export async function POST(request) {
       filters = {},
       streaming = true,
       score_threshold = 0.4,
+      prefetch_limit = 15,
+      fusion_type = "rrf",
     } = body;
-
-    // Validate query
-    if (!query || typeof query !== "string" || query.trim() === "") {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: "Invalid or missing query parameter",
-          message: "Query must be a non-empty string",
-        }),
-        {
-          status: 400,
-          headers: { "Content-Type": "application/json" },
-        }
-      );
-    }
-
-    // Validate limit
-    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: "Invalid limit parameter",
-          message: "Limit must be an integer between 1 and 100",
-        }),
-        {
-          status: 400,
-          headers: { "Content-Type": "application/json" },
-        }
-      );
-    }
 
     // Check collection exists
     const collectionExists = await checkCollectionExists();
@@ -500,16 +465,25 @@ export async function POST(request) {
       );
     }
 
-    // Perform semantic search
-    const searchResults = await searchBestMatches(
+    // Perform hybrid search with native fusion
+    const searchResults = await hybridSearchWithNativeFusion(
       query.trim(),
       limit,
-      filters,
-      score_threshold
+      prefetch_limit,
+      fusion_type
     );
 
+    console.log({ searchResults });
+
+    // Filter by score threshold
+    const filteredResults = searchResults.filter(
+      (result) => result.score >= score_threshold
+    );
+
+    // console.log(`Found ${filteredResults.length} results after filtering`);
+
     // Generate context for LLM
-    const context = generateContextForLLM(searchResults);
+    const context = generateContextForLLM(filteredResults);
 
     if (streaming) {
       // Set up streaming response
@@ -524,7 +498,9 @@ export async function POST(request) {
               `data: ${JSON.stringify({
                 type: "metadata",
                 query: query.trim(),
-                resultCount: searchResults.length,
+                resultCount: filteredResults.length,
+                searchType: "hybrid_native_fusion",
+                fusionType: fusion_type,
               })}\n\n`
             )
           );
@@ -549,7 +525,7 @@ export async function POST(request) {
             encoder.encode(
               `data: ${JSON.stringify({
                 type: "done",
-                retrievedMetrics: formatResults(searchResults).map((r) => ({
+                retrievedMetrics: formatResults(filteredResults).map((r) => ({
                   id: r.id,
                   title: r.title,
                   score: r.score,
@@ -581,9 +557,11 @@ export async function POST(request) {
         JSON.stringify({
           success: true,
           query: query.trim(),
-          resultCount: searchResults.length,
+          resultCount: filteredResults.length,
+          searchType: "hybrid_native_fusion",
+          fusionType: fusion_type,
           response: llmResponse,
-          retrievedMetrics: formatResults(searchResults).map((r) => ({
+          retrievedMetrics: formatResults(filteredResults).map((r) => ({
             id: r.id,
             title: r.title,
             score: r.score,
