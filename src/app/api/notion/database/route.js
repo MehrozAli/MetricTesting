@@ -256,9 +256,10 @@ async function hybridSearchWithNativeFusion(
   query,
   limit = 10,
   prefetchLimit = 20,
-  fusionType = "rrf"
+  fusionType = "rrf",
+  weights = [0.8, 0.2]
 ) {
-  // console.log(`Performing hybrid search with native fusion for: '${query}'`);
+  console.log(`Performing hybrid search with native fusion for: '${query}'`);
 
   // Get vocabulary for sparse vector creation
   const vocab = await getVocabularyFromQdrant();
@@ -284,15 +285,16 @@ async function hybridSearchWithNativeFusion(
       },
     ],
     query: {
-      fusion: fusionType, // "rrf" for Reciprocal Rank Fusion
+      fusion: fusionType,
+      weights: weights,
     },
     limit: limit,
     with_payload: true,
   });
 
-  // console.log(
-  //   `Native fusion search found ${searchResult.points.length} results`
-  // );
+  console.log(
+    `Native fusion search found ${searchResult.points.length} results`
+  );
   return searchResult.points;
 }
 
@@ -446,6 +448,7 @@ export async function POST(request) {
       score_threshold = 0.4,
       prefetch_limit = 15,
       fusion_type = "rrf",
+      weights = [0.8, 0.2],
     } = body;
 
     // Check collection exists
@@ -470,17 +473,16 @@ export async function POST(request) {
       query.trim(),
       limit,
       prefetch_limit,
-      fusion_type
+      fusion_type,
+      weights
     );
-
-    console.log({ searchResults });
 
     // Filter by score threshold
     const filteredResults = searchResults.filter(
       (result) => result.score >= score_threshold
     );
 
-    // console.log(`Found ${filteredResults.length} results after filtering`);
+    console.log(`Found ${filteredResults.length} results after filtering`);
 
     // Generate context for LLM
     const context = generateContextForLLM(filteredResults);

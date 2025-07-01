@@ -110,6 +110,7 @@ export default function SearchComponent() {
             score_threshold: 0.4,
             prefetch_limit: 15,
             fusion_type: "rrf",
+            weights: [0.8, 0.2],
           }),
         });
 
