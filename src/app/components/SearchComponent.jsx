@@ -55,135 +55,90 @@ export default function SearchComponent() {
 
   const fetchSearchResults = async (searchTerm) => {
     try {
-      setIsLoading(true);
       setShowLLMResponse(false);
       setLlmResponse("");
-      setError(null);
 
       if (!searchTerm.trim()) return;
 
-      // Try primary API first
-      try {
-        const response = await fetch(
-          `${process.env.NEXT_PUBLIC_DEV_ML_URL}/search_metric`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              search_term: searchTerm,
-            }),
-          }
-        );
+      const response = await fetch("/api/notion/database", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query: searchTerm,
+          limit: 5,
+          streaming: true,
+          score_threshold: 0.4,
+          prefetch_limit: 15,
+          fusion_type: "rrf",
+          weights: [0.8, 0.2],
+        }),
+      });
 
-        if (!response.ok) {
-          throw new Error(`Error searching metrics: ${response.statusText}`);
-        }
+      if (!response.ok) {
+        throw new Error(`Search failed: ${response.statusText}`);
+      }
 
+      if (response.headers.get("content-type")?.includes("application/json")) {
         const data = await response.json();
-
-        if (data.error) {
-          throw new Error(data.error);
+        if (data.success && data.results) {
+          setSearchResults(data.results);
+          setShowLLMResponse(false);
+          setLlmResponse("");
         }
+        setIsLoading(false);
+        return;
+      }
 
-        // Primary API succeeded - show as search results
-        setSearchResults(Array.isArray(data) ? data : [data]);
-        setShowLLMResponse(false);
-      } catch (primaryError) {
-        console.error(
-          "Primary search failed, using hybrid semantic search with native fusion:",
-          primaryError
-        );
-        setIsLoading(true);
+      if (response.headers.get("content-type")?.includes("text/event-stream")) {
+        setIsStreaming(true);
+        setShowLLMResponse(true);
+        setSearchResults([]);
+        setIsLoading(false);
 
-        // Use hybrid semantic search with native Qdrant fusion
-        const response = await fetch("/api/notion/database", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            query: searchTerm,
-            limit: 5,
-            streaming: true,
-            score_threshold: 0.4,
-            prefetch_limit: 15,
-            fusion_type: "rrf",
-            weights: [0.8, 0.2],
-          }),
-        });
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let accumulatedResponse = "";
 
-        if (!response.ok) {
-          throw new Error(
-            `Hybrid semantic search failed: ${response.statusText}`
-          );
-        }
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
 
-        // Handle streaming response
-        if (
-          response.headers.get("content-type")?.includes("text/event-stream")
-        ) {
-          setIsStreaming(true);
-          setShowLLMResponse(true);
-          setSearchResults([]); // Clear block results
-          setIsLoading(false);
+            const chunk = decoder.decode(value);
+            const lines = chunk.split("\n");
 
-          const reader = response.body.getReader();
-          const decoder = new TextDecoder();
-          let accumulatedResponse = "";
+            for (const line of lines) {
+              if (line.startsWith("data: ")) {
+                const data = line.slice(6);
+                if (data.trim()) {
+                  try {
+                    const parsed = JSON.parse(data);
 
-          try {
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-
-              const chunk = decoder.decode(value);
-              const lines = chunk.split("\n");
-
-              for (const line of lines) {
-                if (line.startsWith("data: ")) {
-                  const data = line.slice(6);
-                  if (data.trim()) {
-                    try {
-                      const parsed = JSON.parse(data);
-
-                      if (parsed.type === "metadata") {
-                        console.log("Hybrid search metadata:", {
-                          ...parsed,
-                          searchType:
-                            parsed.searchType || "hybrid_native_fusion",
-                          fusionType: parsed.fusionType || "rrf",
-                        });
-                      } else if (parsed.type === "content") {
-                        accumulatedResponse += parsed.content;
-                        setLlmResponse(accumulatedResponse);
-                      } else if (parsed.type === "done") {
-                        setIsStreaming(false);
-                        if (parsed.retrievedMetrics) {
-                          console.log(
-                            "Retrieved metrics (native fusion):",
-                            parsed.retrievedMetrics
-                          );
-                        }
-                      }
-                    } catch (e) {
-                      console.error("Error parsing streaming data:", e);
+                    if (parsed.type === "metadata") {
+                      console.log("Query metadata:", parsed);
+                    } else if (parsed.type === "content") {
+                      accumulatedResponse += parsed.content;
+                      setLlmResponse(accumulatedResponse);
+                    } else if (parsed.type === "done") {
+                      setIsStreaming(false);
                     }
+                  } catch (e) {
+                    console.error("Error parsing streaming data:", e);
                   }
                 }
               }
             }
-          } finally {
-            reader.releaseLock();
           }
+        } finally {
+          reader.releaseLock();
         }
       }
     } catch (error) {
       console.error("Search failed:", error);
       setSearchResults([]);
       setShowLLMResponse(false);
-      setError(error.message);
     } finally {
       setIsLoading(false);
       setIsStreaming(false);

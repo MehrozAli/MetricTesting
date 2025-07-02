@@ -144,35 +144,73 @@ Query: "Why is 'New Leads' important?"
 Response: [Use only content from Importance column in database. If empty: "Importance information not available in current data."]
 REMEMBER: Your role is to be a precise conduit for the Notion database information, not to interpret, enhance, or supplement it with external knowledge.`;
 
-/**
- * Tokenize text for sparse vector creation
- */
 function tokenizeText(text) {
-  // Convert to lowercase and split by common delimiters
-  text = text.toLowerCase();
-  // Replace common punctuation with spaces
-  const punctuation = [
-    ",",
-    ".",
-    ";",
-    ":",
-    "!",
-    "?",
-    "(",
-    ")",
-    "[",
-    "]",
-    "{",
-    "}",
-    "-",
-    "_",
-    "/",
-  ];
-  punctuation.forEach((char) => {
-    text = text.replace(new RegExp("\\" + char, "g"), " ");
-  });
-  // Split and filter out empty strings
-  return text.split(" ").filter((token) => token.trim());
+  if (!text) return [];
+
+  text = text.toLowerCase().trim();
+
+  const phrases = [];
+  const separators = [",", ";", "|", "\n"];
+
+  for (const separator of separators) {
+    if (text.includes(separator)) {
+      const parts = text.split(separator);
+      text = parts[0];
+      phrases.push(
+        ...parts
+          .slice(1)
+          .map((p) => p.trim())
+          .filter((p) => p)
+      );
+    }
+  }
+
+  if (text.trim()) {
+    phrases.unshift(text.trim());
+  }
+
+  // Clean up each phrase by removing unnecessary punctuation
+  const cleanedPhrases = [];
+  const trimChars = /^[.,!?()[\]{}"'\-_/]+|[.,!?()[\]{}"'\-_/]+$/g;
+
+  for (const phrase of phrases) {
+    // Remove only trailing/leading punctuation, keep internal structure
+    const cleaned = phrase.replace(trimChars, "");
+    if (cleaned) {
+      cleanedPhrases.push(cleaned);
+    }
+  }
+
+  // Also add individual words for better matching flexibility
+  const allTokens = [];
+
+  for (const phrase of cleanedPhrases) {
+    // Add the full phrase
+    allTokens.push(phrase);
+
+    // Add individual significant words (for fallback matching)
+    const words = phrase.split(/\s+/);
+    for (const word of words) {
+      const cleanedWord = word.replace(trimChars, "");
+      if (cleanedWord.length > 2) {
+        // Only add words longer than 2 characters
+        allTokens.push(cleanedWord);
+      }
+    }
+  }
+
+  // Remove duplicates while preserving order
+  const seen = new Set();
+  const uniqueTokens = [];
+
+  for (const token of allTokens) {
+    if (token && !seen.has(token)) {
+      seen.add(token);
+      uniqueTokens.push(token);
+    }
+  }
+
+  return uniqueTokens;
 }
 
 /**
@@ -296,6 +334,40 @@ async function hybridSearchWithNativeFusion(
     `Native fusion search found ${searchResult.points.length} results`
   );
   return searchResult.points;
+}
+
+async function isExactKeywordInVocabulary(searchTerm) {
+  try {
+    const vocab = await getVocabularyFromQdrant();
+    const normalizedTerm = searchTerm.toLowerCase().trim();
+
+    if (vocab[normalizedTerm] && vocab[normalizedTerm] > 0) {
+      return true;
+    }
+
+    return false;
+  } catch (error) {
+    console.error("Error checking vocabulary:", error);
+    return false;
+  }
+}
+
+function formatResultsForFrontend(results) {
+  return results.map((result) => {
+    const payload = result.payload;
+
+    return {
+      id: payload["UID"] || "",
+      title: payload["Business Name"] || "",
+      description: payload["m_Definition"] || payload["Definition"] || "",
+      calculations: payload["m_Calculation"] || payload["Calculations"] || "",
+      recordedBy: payload["m_Recorded By"] || "",
+      sources: payload["m_They Come Through"]
+        ? [payload["m_They Come Through"]]
+        : [],
+      importance: payload["Importance"] || "",
+    };
+  });
 }
 
 /**
@@ -476,6 +548,7 @@ export async function POST(request) {
       fusion_type,
       weights
     );
+    console.log({ searchResults });
 
     // Filter by score threshold
     const filteredResults = searchResults.filter(
@@ -483,6 +556,29 @@ export async function POST(request) {
     );
 
     console.log(`Found ${filteredResults.length} results after filtering`);
+
+    const isExactKeyword = await isExactKeywordInVocabulary(query.trim());
+
+    if (isExactKeyword) {
+      const formattedResults = formatResultsForFrontend(filteredResults);
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          query: query.trim(),
+          resultCount: filteredResults.length,
+          searchType: "exact_keyword_search",
+          results: formattedResults,
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+          },
+        }
+      );
+    }
 
     // Generate context for LLM
     const context = generateContextForLLM(filteredResults);
