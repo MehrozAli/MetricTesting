@@ -1,8 +1,6 @@
-// api/notion/database/route.js - Updated with Qdrant Native Fusion
 import { QdrantClient } from "@qdrant/js-client-rest";
 import OpenAI from "openai";
 
-// Configuration
 const QDRANT_URL = process.env.QDRANT_URL;
 const QDRANT_API_KEY = process.env.QDRANT_API_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -10,7 +8,6 @@ const COLLECTION_NAME = "HDB_METRIC_HYBRID"; // Updated for hybrid collection
 const EMBEDDING_MODEL = "text-embedding-3-small";
 const CHAT_MODEL = "gpt-4o";
 
-// Initialize clients
 const qdrantClient = new QdrantClient({
   url: QDRANT_URL,
   apiKey: QDRANT_API_KEY,
@@ -21,11 +18,77 @@ const openaiClient = new OpenAI({
   apiKey: OPENAI_API_KEY,
 });
 
-// System prompt (keeping your existing one)
 const SYSTEM_PROMPT = `ROLE: You are a concise and direct property management metrics assistant for a help center system.
 PERSONA: Act as a knowledgeable but brief property management expert who provides clear, actionable answers without unnecessary elaboration.
 TONE: Professional, direct, and informative. Always be concise and to-the-point.
 TASK: Analyze user queries about property management metrics and provide precise answers using ONLY the retrieved metric data from the Notion database.
+
+RESPONSE FORMAT INTELLIGENCE:
+You must intelligently determine the appropriate response format based on the query type and context:
+
+JSON STRING RESPONSE CRITERIA:
+Return a structured JSON string response ONLY when ALL of the following conditions are met:
+1. The query is a simple, direct definitional request about a single metric
+2. The query matches ONE of these EXACT patterns:
+   - "What is [metric]"
+   - "What are [metric]"
+   - "[metric]" (just the metric name alone i.e "Created Leads", "Leased Prospects", "Sessions", "Tours", "scheduled to toured ratio" )
+   - "Explain [metric]"
+   - "Define [metric]"
+   - "Describe [metric]"
+3. The query does NOT ask for processes, methodologies, or explanations (no "How", "Why", "When", "Where")
+4. The query is NOT asking multiple questions or compound requests
+5. The user expects structured data rather than conversational explanation
+
+NEVER use JSON string format response for:
+- "How is/are [metric] recorded/calculated/measured?"
+- "How does [metric] work?"
+- "Why is [metric] important?"
+- "When should [metric] be used?"
+- Any compound questions with "and"
+- Any questions asking for processes or explanations
+- "Tell me about [metric]"
+
+REMEMBER: JSON RESPONSE MUST NOT WRAPPED IN BACKTICKS.
+
+For these specific cases ONLY, return this EXACT JSON string format response:
+{
+  "directResponse": true,
+  "metrics": [
+    {
+      "id": "[UID from payload]",
+      "title": "[Business Name from payload]",
+      "description": "[m_Definition or Definition from payload]",
+      "calculations": "[m_Calculation or Calculations from payload]",
+      "recordedBy": "[m_Recorded By from payload]",
+      "sources": ["[m_They Come Through from payload]"]
+      "importance": "[m_Importance from payload]"
+    }
+  ]
+}
+
+EXAMPLES FOR JSON STRING RESPONSE:
+Query: "Scheduled Contacts"
+Response: {"directResponse": true, "metrics": [{"id": "...", "title": "Scheduled Contacts", "description": "...", "calculations": "...", "recordedBy": "...", "sources": ["..."], "importance": "..."}]}
+
+Query: "Define applied prospects"
+Response: {"directResponse": true, "metrics": [{"id": "...", "title": "Applied Prospects", "description": "...", "calculations": "...", "recordedBy": "...", "sources": ["..."], "importance": "..."}]}
+
+STREAMING RESPONSE CRITERIA:
+Use normal conversational streaming response for ALL queries except the very specific JSON cases above, including:
+1. ANY questions starting with "How", "Why", "When", "Where"
+2. Process/methodology questions (e.g., "How is X recorded?", "How is X calculated?")
+3. Compound questions with "and" (e.g., "How are X recorded and calculated?")
+4. Complex queries requiring analysis, comparison, or interpretation
+5. Multi-part questions or questions about relationships between metrics
+6. Questions asking for recommendations, best practices, or strategic insights
+7. Questions that require contextual explanation beyond basic metric data
+8. Follow-up questions or clarification requests
+9. Questions "Tell me about"
+10. Any question that doesn't match the exact patterns listed in JSON RESPONSE CRITERIA
+
+When streaming, provide natural, conversational responses while strictly adhering to database content.
+
 CRITICAL DATA SOURCE RULE:
 
 PRIMARY SOURCE: All responses must be based strictly on information retrieved from the Notion database
@@ -38,7 +101,7 @@ For any question about a metric, analyze ALL available columns (Definition, Calc
 
 Definition Questions
 
-Patterns: "What does [metric] measure?" / "What is [metric]?"
+Patterns: "What does [metric] measure?"
 
 Source: Extract from 'Definition' column in database. Add 'Calculations' column data if available. Do not infer or add external definitions.
 Calculation Questions
@@ -156,6 +219,7 @@ function tokenizeText(text) {
     if (text.includes(separator)) {
       const parts = text.split(separator);
       text = parts[0];
+
       phrases.push(
         ...parts
           .slice(1)
@@ -169,37 +233,30 @@ function tokenizeText(text) {
     phrases.unshift(text.trim());
   }
 
-  // Clean up each phrase by removing unnecessary punctuation
   const cleanedPhrases = [];
   const trimChars = /^[.,!?()[\]{}"'\-_/]+|[.,!?()[\]{}"'\-_/]+$/g;
 
   for (const phrase of phrases) {
-    // Remove only trailing/leading punctuation, keep internal structure
     const cleaned = phrase.replace(trimChars, "");
     if (cleaned) {
       cleanedPhrases.push(cleaned);
     }
   }
 
-  // Also add individual words for better matching flexibility
   const allTokens = [];
 
   for (const phrase of cleanedPhrases) {
-    // Add the full phrase
     allTokens.push(phrase);
 
-    // Add individual significant words (for fallback matching)
     const words = phrase.split(/\s+/);
     for (const word of words) {
       const cleanedWord = word.replace(trimChars, "");
       if (cleanedWord.length > 2) {
-        // Only add words longer than 2 characters
         allTokens.push(cleanedWord);
       }
     }
   }
 
-  // Remove duplicates while preserving order
   const seen = new Set();
   const uniqueTokens = [];
 
@@ -220,7 +277,6 @@ function createSparseVector(text, vocab) {
   const tokens = tokenizeText(text);
   const tokenCounts = {};
 
-  // Count tokens
   tokens.forEach((token) => {
     if (token in vocab) {
       tokenCounts[token] = (tokenCounts[token] || 0) + 1;
@@ -237,7 +293,6 @@ function createSparseVector(text, vocab) {
     }
   });
 
-  // Normalize the vector
   if (values.length > 0) {
     const norm = Math.sqrt(values.reduce((sum, val) => sum + val * val, 0));
     if (norm > 0) {
@@ -299,16 +354,12 @@ async function hybridSearchWithNativeFusion(
 ) {
   console.log(`Performing hybrid search with native fusion for: '${query}'`);
 
-  // Get vocabulary for sparse vector creation
   const vocab = await getVocabularyFromQdrant();
 
-  // Generate dense embedding
   const denseQueryVector = await generateEmbedding(query);
 
-  // Generate sparse vector
   const sparseQueryVector = createSparseVector(query, vocab);
 
-  // Use native fusion
   const searchResult = await qdrantClient.query(COLLECTION_NAME, {
     prefetch: [
       {
@@ -336,23 +387,7 @@ async function hybridSearchWithNativeFusion(
   return searchResult.points;
 }
 
-async function isExactKeywordInVocabulary(searchTerm) {
-  try {
-    const vocab = await getVocabularyFromQdrant();
-    const normalizedTerm = searchTerm.toLowerCase().trim();
-
-    if (vocab[normalizedTerm] && vocab[normalizedTerm] > 0) {
-      return true;
-    }
-
-    return false;
-  } catch (error) {
-    console.error("Error checking vocabulary:", error);
-    return false;
-  }
-}
-
-function formatResultsForFrontend(results) {
+function formatJsonResults(results) {
   return results.map((result) => {
     const payload = result.payload;
 
@@ -362,17 +397,15 @@ function formatResultsForFrontend(results) {
       description: payload["m_Definition"] || payload["Definition"] || "",
       calculations: payload["m_Calculation"] || payload["Calculations"] || "",
       recordedBy: payload["m_Recorded By"] || "",
+      importance: payload["Importance"] || "",
       sources: payload["m_They Come Through"]
         ? [payload["m_They Come Through"]]
         : [],
-      importance: payload["Importance"] || "",
+      score: result.score,
     };
   });
 }
 
-/**
- * Format search results for API response
- */
 function formatResults(results) {
   return results.map((result) => {
     const payload = result.payload;
@@ -403,9 +436,6 @@ function formatResults(results) {
   });
 }
 
-/**
- * Generate context from search results for LLM
- */
 function generateContextForLLM(searchResults) {
   const formattedResults = formatResults(searchResults);
 
@@ -432,12 +462,7 @@ function generateContextForLLM(searchResults) {
     .join("\n---\n");
 }
 
-/**
- * Generate LLM response based on query and context
- */
 async function generateLLMResponse(query, context, isStreaming = true) {
-  console.log({ query, context });
-
   const userPrompt = `User Query: "${query}"
 
 Retrieved Context:
@@ -445,34 +470,22 @@ ${context}
 
 Based on the query type and the retrieved context above, provide an appropriate response.`;
 
-  if (isStreaming) {
-    // Return a stream for the response
-    const stream = await openaiClient.chat.completions.create({
-      model: CHAT_MODEL,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: userPrompt },
-      ],
-      stream: true,
-      temperature: 0,
-      max_tokens: 2000,
-    });
+  const stream = await openaiClient.chat.completions.create({
+    model: CHAT_MODEL,
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: userPrompt },
+    ],
+    stream: isStreaming,
+    temperature: 0,
+    max_tokens: 2000,
+  });
 
-    return stream;
-  } else {
-    // Return a complete response
-    const completion = await openaiClient.chat.completions.create({
-      model: CHAT_MODEL,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: userPrompt },
-      ],
-      temperature: 0,
-      max_tokens: 2000,
-    });
-
-    return completion.choices[0].message.content;
+  if (!isStreaming) {
+    return stream.choices[0].message.content;
   }
+
+  return stream;
 }
 
 /**
@@ -493,7 +506,6 @@ async function checkCollectionExists() {
  */
 export async function POST(request) {
   try {
-    // Parse request body
     let body;
     try {
       body = await request.json();
@@ -511,19 +523,8 @@ export async function POST(request) {
       );
     }
 
-    // Extract parameters
-    const {
-      query,
-      limit = 5,
-      filters = {},
-      streaming = true,
-      score_threshold = 0.4,
-      prefetch_limit = 15,
-      fusion_type = "rrf",
-      weights = [0.8, 0.2],
-    } = body;
+    const { query, score_threshold = 0.4, prefetch_limit = 15 } = body;
 
-    // Check collection exists
     const collectionExists = await checkCollectionExists();
     if (!collectionExists) {
       return new Response(
@@ -540,35 +541,51 @@ export async function POST(request) {
       );
     }
 
-    // Perform hybrid search with native fusion
     const searchResults = await hybridSearchWithNativeFusion(
       query.trim(),
-      limit,
+      10,
       prefetch_limit,
-      fusion_type,
-      weights
+      "rrf",
+      [0.8, 0.2]
     );
-    console.log({ searchResults });
 
-    // Filter by score threshold
     const filteredResults = searchResults.filter(
       (result) => result.score >= score_threshold
     );
 
     console.log(`Found ${filteredResults.length} results after filtering`);
 
-    const isExactKeyword = await isExactKeywordInVocabulary(query.trim());
+    const context = generateContextForLLM(filteredResults);
 
-    if (isExactKeyword) {
-      const formattedResults = formatResultsForFrontend(filteredResults);
+    const llmResponse = await generateLLMResponse(query.trim(), context, false);
+    console.log("llmResponse", llmResponse);
 
+    let isJsonResponse = false;
+    let parsedJsonResponse = null;
+
+    try {
+      const trimmedResponse = llmResponse.trim();
+      if (trimmedResponse.startsWith("{") && trimmedResponse.endsWith("}")) {
+        parsedJsonResponse = JSON.parse(trimmedResponse);
+
+        if (parsedJsonResponse.directResponse === true) {
+          isJsonResponse = true;
+        }
+      }
+    } catch (e) {
+      isJsonResponse = false;
+    }
+
+    if (isJsonResponse) {
       return new Response(
         JSON.stringify({
           success: true,
           query: query.trim(),
           resultCount: filteredResults.length,
-          searchType: "exact_keyword_search",
-          results: formattedResults,
+          searchType: "direct_response",
+          responseType: "json",
+          directResponse: parsedJsonResponse,
+          retrievedMetrics: formatJsonResults(filteredResults),
         }),
         {
           status: 200,
@@ -578,19 +595,12 @@ export async function POST(request) {
           },
         }
       );
-    }
-
-    // Generate context for LLM
-    const context = generateContextForLLM(filteredResults);
-
-    if (streaming) {
-      // Set up streaming response
+    } else {
       const encoder = new TextEncoder();
-      const stream = await generateLLMResponse(query.trim(), context, true);
+      const stream = await generateLLMResponse(query.trim(), context);
 
       const readableStream = new ReadableStream({
         async start(controller) {
-          // Send initial metadata
           controller.enqueue(
             encoder.encode(
               `data: ${JSON.stringify({
@@ -598,12 +608,11 @@ export async function POST(request) {
                 query: query.trim(),
                 resultCount: filteredResults.length,
                 searchType: "hybrid_native_fusion",
-                fusionType: fusion_type,
+                fusionType: "rrf",
               })}\n\n`
             )
           );
 
-          // Stream the LLM response
           for await (const chunk of stream) {
             const content = chunk.choices[0]?.delta?.content || "";
             if (content) {
@@ -618,7 +627,6 @@ export async function POST(request) {
             }
           }
 
-          // Send completion signal with retrieved metrics
           controller.enqueue(
             encoder.encode(
               `data: ${JSON.stringify({
@@ -643,36 +651,6 @@ export async function POST(request) {
           Connection: "keep-alive",
         },
       });
-    } else {
-      // Non-streaming response
-      const llmResponse = await generateLLMResponse(
-        query.trim(),
-        context,
-        false
-      );
-
-      return new Response(
-        JSON.stringify({
-          success: true,
-          query: query.trim(),
-          resultCount: filteredResults.length,
-          searchType: "hybrid_native_fusion",
-          fusionType: fusion_type,
-          response: llmResponse,
-          retrievedMetrics: formatResults(filteredResults).map((r) => ({
-            id: r.id,
-            title: r.title,
-            score: r.score,
-          })),
-        }),
-        {
-          status: 200,
-          headers: {
-            "Content-Type": "application/json",
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-          },
-        }
-      );
     }
   } catch (error) {
     console.error(`API error: ${error}`);
@@ -690,7 +668,6 @@ export async function POST(request) {
   }
 }
 
-// OPTIONS handler for CORS
 export async function OPTIONS(request) {
   return new Response(null, {
     status: 200,

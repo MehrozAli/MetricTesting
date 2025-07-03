@@ -50,16 +50,17 @@ export default function SearchComponent() {
   const [llmResponse, setLlmResponse] = useState("");
   const [showLLMResponse, setShowLLMResponse] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState(null);
 
   const fetchSearchResults = async (searchTerm) => {
     try {
+      setIsLoading(true);
       setShowLLMResponse(false);
       setLlmResponse("");
 
       if (!searchTerm.trim()) return;
 
+      // Use semantic search with LLM
       const response = await fetch("/api/notion/database", {
         method: "POST",
         headers: {
@@ -67,34 +68,35 @@ export default function SearchComponent() {
         },
         body: JSON.stringify({
           query: searchTerm,
-          limit: 5,
-          streaming: true,
           score_threshold: 0.4,
           prefetch_limit: 15,
-          fusion_type: "rrf",
-          weights: [0.8, 0.2],
         }),
       });
 
       if (!response.ok) {
-        throw new Error(`Search failed: ${response.statusText}`);
+        throw new Error(`Semantic search failed: ${response.statusText}`);
       }
 
-      if (response.headers.get("content-type")?.includes("application/json")) {
+      // Check if this is a direct JSON response
+      const contentType = response.headers.get("content-type");
+
+      if (contentType?.includes("application/json")) {
+        // Handle direct JSON response
         const data = await response.json();
-        if (data.success && data.results) {
-          setSearchResults(data.results);
+
+        if (data.searchType === "direct_response") {
+          // Set the results directly to selectedSearchResult
+          setSearchResults(data.retrievedMetrics);
           setShowLLMResponse(false);
-          setLlmResponse("");
+          setIsLoading(false);
+          return;
         }
-        setIsLoading(false);
-        return;
       }
 
-      if (response.headers.get("content-type")?.includes("text/event-stream")) {
-        setIsStreaming(true);
+      // Handle streaming response
+      if (contentType?.includes("text/event-stream")) {
         setShowLLMResponse(true);
-        setSearchResults([]);
+        setSearchResults([]); // Clear block results
         setIsLoading(false);
 
         const reader = response.body.getReader();
@@ -122,7 +124,7 @@ export default function SearchComponent() {
                       accumulatedResponse += parsed.content;
                       setLlmResponse(accumulatedResponse);
                     } else if (parsed.type === "done") {
-                      setIsStreaming(false);
+                      setShowLLMResponse(false);
                     }
                   } catch (e) {
                     console.error("Error parsing streaming data:", e);
@@ -141,7 +143,6 @@ export default function SearchComponent() {
       setShowLLMResponse(false);
     } finally {
       setIsLoading(false);
-      setIsStreaming(false);
     }
   };
 
@@ -161,14 +162,14 @@ export default function SearchComponent() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Enter your search query..."
             className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            disabled={isLoading || isStreaming}
+            disabled={isLoading}
           />
           <button
             type="submit"
-            disabled={isLoading || isStreaming || !query.trim()}
+            disabled={isLoading || !query.trim()}
             className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
           >
-            {isLoading || isStreaming ? "Searching..." : "Search"}
+            {isLoading ? "Searching..." : "Search"}
           </button>
         </div>
       </form>
@@ -181,18 +182,10 @@ export default function SearchComponent() {
       )}
 
       {/* Loading State */}
-      {isLoading && !isStreaming && (
+      {isLoading && (
         <div className="mb-6 text-center">
           <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
           <p className="mt-2 text-gray-600">Searching...</p>
-        </div>
-      )}
-
-      {/* Streaming Indicator */}
-      {isStreaming && (
-        <div className="mb-4 flex items-center gap-2 text-sm text-gray-600">
-          <div className="animate-pulse">●</div>
-          <span>Generating response...</span>
         </div>
       )}
 
