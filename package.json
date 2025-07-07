@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@notionhq/client": "^4.0.0",
     "@qdrant/js-client-rest": "^1.14.1",
     "next": "15.3.4",
     "openai": "^5.8.2",

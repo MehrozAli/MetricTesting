@@ -53,6 +53,7 @@ function LLMResponse({ response }) {
 export default function SearchComponent() {
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
+
   const [llmResponse, setLlmResponse] = useState("");
   const [showLLMResponse, setShowLLMResponse] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -74,7 +75,7 @@ export default function SearchComponent() {
         },
         body: JSON.stringify({
           query: searchTerm,
-          score_threshold: 0.4,
+          score_threshold: 0.6,
           prefetch_limit: 15,
         }),
       });
@@ -213,9 +214,11 @@ export default function SearchComponent() {
             Search Results ({searchResults.length}):
           </h3>
           <div className="grid gap-6 md:grid-cols-1 lg:grid-cols-2">
-            {searchResults.map((result, index) => (
-              <MetricCard key={result.uid || index} metric={result} />
-            ))}
+            {searchResults
+              .filter((result) => result.score > 0.6)
+              .map((result, index) => (
+                <MetricCard key={result.uid || index} metric={result} />
+              ))}
           </div>
         </div>
       )}
