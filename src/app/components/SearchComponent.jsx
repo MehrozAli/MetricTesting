@@ -211,7 +211,8 @@ export default function SearchComponent() {
       {!showLLMResponse && searchResults.length > 0 && (
         <div className="mt-6">
           <h3 className="text-lg font-semibold mb-6 text-gray-900 dark:text-gray-100">
-            Search Results ({searchResults.length}):
+            Search Results (
+            {searchResults.filter((result) => result.score > 0.6).length}):
           </h3>
           <div className="grid gap-6 md:grid-cols-1 lg:grid-cols-2">
             {searchResults
