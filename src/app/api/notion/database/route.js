@@ -582,7 +582,7 @@ export async function POST(request) {
 
     const SYSTEM_PROMPT_FROM_NOTION = jsCode[0]?.code;
 
-    const { query, score_threshold = 0.4, prefetch_limit = 15 } = body;
+    const { query, prefetch_limit = 15 } = body;
 
     const collectionExists = await checkCollectionExists();
     if (!collectionExists) {
@@ -608,13 +608,7 @@ export async function POST(request) {
       [0.8, 0.2]
     );
 
-    const filteredResults = searchResults.filter(
-      (result) => result.score >= score_threshold
-    );
-
-    console.log(`Found ${filteredResults.length} results after filtering`);
-
-    const context = generateContextForLLM(filteredResults);
+    const context = generateContextForLLM(searchResults);
 
     const llmResponse = await generateLLMResponse(
       query.trim(),
@@ -644,11 +638,11 @@ export async function POST(request) {
         JSON.stringify({
           success: true,
           query: query.trim(),
-          resultCount: filteredResults.length,
+          resultCount: searchResults.length,
           searchType: "direct_response",
           responseType: "json",
           directResponse: parsedJsonResponse,
-          retrievedMetrics: formatJsonResults(filteredResults),
+          retrievedMetrics: formatJsonResults(searchResults),
         }),
         {
           status: 200,
@@ -674,7 +668,7 @@ export async function POST(request) {
               `data: ${JSON.stringify({
                 type: "metadata",
                 query: query.trim(),
-                resultCount: filteredResults.length,
+                resultCount: searchResults.length,
                 searchType: "hybrid_native_fusion",
                 fusionType: "rrf",
               })}\n\n`
@@ -699,7 +693,7 @@ export async function POST(request) {
             encoder.encode(
               `data: ${JSON.stringify({
                 type: "done",
-                retrievedMetrics: formatResults(filteredResults).map((r) => ({
+                retrievedMetrics: formatResults(searchResults).map((r) => ({
                   id: r.id,
                   title: r.title,
                   score: r.score,
